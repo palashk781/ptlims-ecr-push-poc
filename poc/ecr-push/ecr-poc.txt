@@ -1,0 +1,2 @@
+PT-LIMS ECR publishing proof of concept.
+This image contains no application code, credentials, or database configuration.

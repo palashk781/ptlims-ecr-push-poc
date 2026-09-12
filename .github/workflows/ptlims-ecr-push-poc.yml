@@ -1,0 +1,94 @@
+name: PT-LIMS ECR Push POC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "poc/ecr-push/**"
+      - ".github/workflows/ptlims-ecr-push-poc.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ptlims-ecr-push-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: Build and push test image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      EXPECTED_AWS_ACCOUNT_ID: "783559591987"
+      AWS_REGION: eu-west-2
+      AWS_ECR_PUBLISH_ROLE_ARN: arn:aws:iam::783559591987:role/github_actions_pipeline_ecr_role
+      ECR_REPOSITORY: apha/ptlexternal
+      LOCAL_IMAGE: ptlims-ecr-push-poc
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build POC image
+        run: |
+          docker build \
+            --file poc/ecr-push/Dockerfile \
+            --tag "${LOCAL_IMAGE}:${GITHUB_SHA}" \
+            poc/ecr-push
+
+      - name: Configure AWS credentials through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          role-to-assume: ${{ env.AWS_ECR_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: ptlims-ecr-poc-${{ github.run_id }}
+
+      - name: Verify assumed AWS identity
+        run: |
+          aws sts get-caller-identity
+          ACTUAL_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          test "$ACTUAL_ACCOUNT_ID" = "$EXPECTED_AWS_ACCOUNT_ID"
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Tag and push image
+        id: publish
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          IMAGE_TAG="poc-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          docker tag "${LOCAL_IMAGE}:${GITHUB_SHA}" "$IMAGE_URI"
+          docker push "$IMAGE_URI"
+
+          IMAGE_DIGEST="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+
+          {
+            echo "image_tag=$IMAGE_TAG"
+            echo "image_uri=$IMAGE_URI"
+            echo "image_digest=$IMAGE_DIGEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish result summary
+        run: |
+          {
+            echo "### PT-LIMS ECR push succeeded"
+            echo
+            echo "- Account: \`${EXPECTED_AWS_ACCOUNT_ID}\`"
+            echo "- Region: \`${AWS_REGION}\`"
+            echo "- Repository: \`${ECR_REPOSITORY}\`"
+            echo "- Image: \`${{ steps.publish.outputs.image_uri }}\`"
+            echo "- Digest: \`${{ steps.publish.outputs.image_digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
