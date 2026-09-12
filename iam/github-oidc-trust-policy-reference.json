@@ -5,17 +5,16 @@
       "Effect": "Allow",
       "Principal": {
         "Federated": "arn:aws:iam::597088039162:oidc-provider/token.actions.githubusercontent.com"
-      },
+            },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:palashk781/ptlims-ecr-push-poc:*"
+          "token.actions.githubusercontent.com:sub": "repo:palashk781/ptlims-ecr-push-poc*"
         }
       }
     }
   ]
 }
-
