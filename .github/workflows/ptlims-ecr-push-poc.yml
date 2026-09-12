@@ -24,15 +24,15 @@ jobs:
     timeout-minutes: 15
 
     env:
-      EXPECTED_AWS_ACCOUNT_ID: "783559591987"
+      EXPECTED_AWS_ACCOUNT_ID: "597088039162"
       AWS_REGION: eu-west-2
-      AWS_ECR_PUBLISH_ROLE_ARN: arn:aws:iam::783559591987:role/github_actions_pipeline_ecr_role
-      ECR_REPOSITORY: apha/ptlexternal
+      AWS_ECR_PUBLISH_ROLE_ARN: arn:aws:iam::597088039162:role/github-actions-ecr-push-role
+      ECR_REPOSITORY: pk/ptlexternal
       LOCAL_IMAGE: ptlims-ecr-push-poc
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4 # Fixed version
 
       - name: Build POC image
         run: |
@@ -42,7 +42,7 @@ jobs:
             poc/ecr-push
 
       - name: Configure AWS credentials through GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v6.2.4
+        uses: aws-actions/configure-aws-credentials@v4 # Fixed version
         with:
           role-to-assume: ${{ env.AWS_ECR_PUBLISH_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}

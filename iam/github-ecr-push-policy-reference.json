@@ -19,7 +19,8 @@
         "ecr:PutImage",
         "ecr:UploadLayerPart"
       ],
-      "Resource": "arn:aws:ecr:eu-west-2:783559591987:repository/apha/ptlexternal"
+      "Resource": "arn:aws:ecr:eu-west-2:597088039162:repository/pk/ptlexternal"
     }
   ]
 }
+

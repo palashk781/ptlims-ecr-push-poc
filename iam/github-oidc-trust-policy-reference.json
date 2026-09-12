@@ -4,15 +4,18 @@
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::783559591987:oidc-provider/token.actions.githubusercontent.com"
+        "Federated": "arn:aws:iam::597088039162:oidc-provider/token.actions.githubusercontent.com"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:DEFRA/apha-ptl-apps:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:palashk781/ptlims-ecr-push-poc:*"
         }
       }
     }
   ]
 }
+
