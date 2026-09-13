@@ -32,26 +32,40 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Build POC image
+        shell: bash
         run: |
+          set -euo pipefail
+
           docker build \
             --file poc/ecr-push/Dockerfile \
             --tag "${LOCAL_IMAGE}:${GITHUB_SHA}" \
             poc/ecr-push
 
       - name: Configure AWS credentials through GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-to-assume: ${{ env.AWS_ECR_PUBLISH_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+          allowed-account-ids: ${{ env.EXPECTED_AWS_ACCOUNT_ID }}
           role-session-name: ptlims-ecr-poc-${{ github.run_id }}
 
       - name: Verify assumed AWS identity
+        shell: bash
         run: |
+          set -euo pipefail
+
           aws sts get-caller-identity
-          ACTUAL_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+
+          ACTUAL_ACCOUNT_ID="$(aws sts get-caller-identity \
+            --query Account \
+            --output text)"
+
           test "$ACTUAL_ACCOUNT_ID" = "$EXPECTED_AWS_ACCOUNT_ID"
 
       - name: Log in to Amazon ECR
@@ -60,9 +74,12 @@ jobs:
 
       - name: Tag and push image
         id: publish
+        shell: bash
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
+          set -euo pipefail
+
           IMAGE_TAG="poc-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
@@ -72,23 +89,34 @@ jobs:
           IMAGE_DIGEST="$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$IMAGE_TAG" \
-            --query 'imageDetails[*].imageDigest' \
+            --query 'imageDetails[0].imageDigest' \
             --output text)"
+
+          test -n "$IMAGE_DIGEST"
+          test "$IMAGE_DIGEST" != "None"
+
+          DIGEST_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}@${IMAGE_DIGEST}"
 
           {
             echo "image_tag=$IMAGE_TAG"
             echo "image_uri=$IMAGE_URI"
             echo "image_digest=$IMAGE_DIGEST"
+            echo "digest_uri=$DIGEST_URI"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish result summary
+        shell: bash
         run: |
+          set -euo pipefail
+
           {
             echo "### PT-LIMS ECR push succeeded"
             echo
             echo "- Account: \`${EXPECTED_AWS_ACCOUNT_ID}\`"
             echo "- Region: \`${AWS_REGION}\`"
             echo "- Repository: \`${ECR_REPOSITORY}\`"
+            echo "- Tag: \`${{ steps.publish.outputs.image_tag }}\`"
             echo "- Image: \`${{ steps.publish.outputs.image_uri }}\`"
             echo "- Digest: \`${{ steps.publish.outputs.image_digest }}\`"
+            echo "- Digest URI: \`${{ steps.publish.outputs.digest_uri }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
