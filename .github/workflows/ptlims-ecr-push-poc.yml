@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: ptlims-ecr-push-${{ github.ref }}
@@ -23,15 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Required to generate:
-    # repo:DEFRA@5528822/apha-ptl-apps@1347322276:environment:ecr-production
-    environment:
-      name: ecr-production
-
     env:
       EXPECTED_AWS_ACCOUNT_ID: "597088039162"
       AWS_REGION: eu-west-2
-      AWS_ECR_PUBLISH_ROLE_ARN: arn:aws:iam::597088039162:role/github-actions-ecr-push-role
       ECR_REPOSITORY: pk/ptlexternal
       LOCAL_IMAGE: ptlims-ecr-push-poc
 
@@ -41,60 +34,36 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build POC image
+      - name: Validate required GitHub secrets
         shell: bash
+        env:
+          ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          SECRET_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
 
-          docker build \
-            --file poc/ecr-push/Dockerfile \
-            --tag "${LOCAL_IMAGE}:${GITHUB_SHA}" \
-            poc/ecr-push
+          if [[ -z "$ACCESS_KEY" ]]; then
+            echo "::error::AWS_ACCESS_KEY_ID is not configured in GitHub Secrets."
+            exit 1
+          fi
 
-      - name: Display OIDC claims for troubleshooting
-        shell: bash
-        run: |
-          set -euo pipefail
+          if [[ -z "$SECRET_KEY" ]]; then
+            echo "::error::AWS_SECRET_ACCESS_KEY is not configured in GitHub Secrets."
+            exit 1
+          fi
 
-          RESPONSE="$(curl --silent --show-error --fail \
-            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")"
+          echo "Required AWS credentials are configured."
 
-          TOKEN="$(echo "$RESPONSE" | jq -r '.value')"
-          PAYLOAD="$(echo "$TOKEN" | cut -d '.' -f 2)"
-
-          TOKEN_PAYLOAD="$PAYLOAD" python3 - <<'PY'
-          import base64
-          import json
-          import os
-
-          payload = os.environ["TOKEN_PAYLOAD"]
-          payload += "=" * (-len(payload) % 4)
-          claims = json.loads(base64.urlsafe_b64decode(payload))
-
-          for key in [
-              "aud",
-              "sub",
-              "repository",
-              "repository_owner_id",
-              "repository_id",
-              "ref",
-              "event_name",
-              "environment",
-          ]:
-              print(f"{key}={claims.get(key)}")
-          PY
-
-      - name: Configure AWS credentials through GitHub OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
-          role-to-assume: ${{ env.AWS_ECR_PUBLISH_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-          audience: sts.amazonaws.com
           allowed-account-ids: ${{ env.EXPECTED_AWS_ACCOUNT_ID }}
-          role-session-name: ptlims-ecr-poc-${{ github.run_id }}
+          force-skip-oidc: true
 
-      - name: Verify assumed AWS identity
+      - name: Verify AWS identity
         shell: bash
         run: |
           set -euo pipefail
@@ -105,7 +74,35 @@ jobs:
             --query Account \
             --output text)"
 
-          test "$ACTUAL_ACCOUNT_ID" = "$EXPECTED_AWS_ACCOUNT_ID"
+          if [[ "$ACTUAL_ACCOUNT_ID" != "$EXPECTED_AWS_ACCOUNT_ID" ]]; then
+            echo "::error::AWS account mismatch."
+            echo "::error::Expected account: $EXPECTED_AWS_ACCOUNT_ID"
+            echo "::error::Actual account: $ACTUAL_ACCOUNT_ID"
+            exit 1
+          fi
+
+          echo "Successfully authenticated to AWS account $ACTUAL_ACCOUNT_ID."
+
+      - name: Verify ECR repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --query 'repositories[0].repositoryUri' \
+            --output text
+
+      - name: Build POC image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker build \
+            --file poc/ecr-push/Dockerfile \
+            --tag "${LOCAL_IMAGE}:${GITHUB_SHA}" \
+            poc/ecr-push
 
       - name: Log in to Amazon ECR
         id: ecr-login
@@ -122,17 +119,27 @@ jobs:
           IMAGE_TAG="poc-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
-          docker tag "${LOCAL_IMAGE}:${GITHUB_SHA}" "$IMAGE_URI"
+          echo "Tagging image as ${IMAGE_URI}"
+
+          docker tag \
+            "${LOCAL_IMAGE}:${GITHUB_SHA}" \
+            "$IMAGE_URI"
+
+          echo "Pushing image to Amazon ECR"
+
           docker push "$IMAGE_URI"
 
           IMAGE_DIGEST="$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$IMAGE_TAG" \
             --query 'imageDetails[0].imageDigest' \
-            --output text)"
+            --output text \
+            --region "$AWS_REGION")"
 
-          test -n "$IMAGE_DIGEST"
-          test "$IMAGE_DIGEST" != "None"
+          if [[ -z "$IMAGE_DIGEST" || "$IMAGE_DIGEST" == "None" ]]; then
+            echo "::error::Unable to retrieve the pushed image digest."
+            exit 1
+          fi
 
           DIGEST_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}@${IMAGE_DIGEST}"
 
@@ -143,6 +150,8 @@ jobs:
             echo "digest_uri=$DIGEST_URI"
           } >> "$GITHUB_OUTPUT"
 
+          echo "Image successfully pushed: $DIGEST_URI"
+
       - name: Publish result summary
         shell: bash
         run: |
@@ -152,12 +161,11 @@ jobs:
             echo "### PT-LIMS ECR push succeeded"
             echo
             echo "- GitHub repository: \`${GITHUB_REPOSITORY}\`"
-            echo "- GitHub environment: \`ecr-production\`"
             echo "- AWS account: \`${EXPECTED_AWS_ACCOUNT_ID}\`"
             echo "- AWS region: \`${AWS_REGION}\`"
             echo "- ECR repository: \`${ECR_REPOSITORY}\`"
-            echo "- Tag: \`${{ steps.publish.outputs.image_tag }}\`"
-            echo "- Image: \`${{ steps.publish.outputs.image_uri }}\`"
-            echo "- Digest: \`${{ steps.publish.outputs.image_digest }}\`"
+            echo "- Image tag: \`${{ steps.publish.outputs.image_tag }}\`"
+            echo "- Image URI: \`${{ steps.publish.outputs.image_uri }}\`"
+            echo "- Image digest: \`${{ steps.publish.outputs.image_digest }}\`"
             echo "- Digest URI: \`${{ steps.publish.outputs.digest_uri }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
