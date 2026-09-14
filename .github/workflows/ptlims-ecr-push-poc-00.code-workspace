@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../../ptlims-ecr-db-connectivity-poc/ptlims-ecr-db-connectivity-poc"
+		}
+	],
+	"settings": {}
+}

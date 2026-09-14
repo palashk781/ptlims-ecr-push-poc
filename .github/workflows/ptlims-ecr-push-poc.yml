@@ -23,6 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # Required to generate:
+    # repo:DEFRA@5528822/apha-ptl-apps@1347322276:environment:ecr-production
+    environment:
+      name: ecr-production
+
     env:
       EXPECTED_AWS_ACCOUNT_ID: "597088039162"
       AWS_REGION: eu-west-2
@@ -51,8 +56,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          RESPONSE="$(curl --silent --fail \
-            --header "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          RESPONSE="$(curl --silent --show-error --fail \
+            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")"
 
           TOKEN="$(echo "$RESPONSE" | jq -r '.value')"
@@ -146,9 +151,11 @@ jobs:
           {
             echo "### PT-LIMS ECR push succeeded"
             echo
-            echo "- Account: \`${EXPECTED_AWS_ACCOUNT_ID}\`"
-            echo "- Region: \`${AWS_REGION}\`"
-            echo "- Repository: \`${ECR_REPOSITORY}\`"
+            echo "- GitHub repository: \`${GITHUB_REPOSITORY}\`"
+            echo "- GitHub environment: \`ecr-production\`"
+            echo "- AWS account: \`${EXPECTED_AWS_ACCOUNT_ID}\`"
+            echo "- AWS region: \`${AWS_REGION}\`"
+            echo "- ECR repository: \`${ECR_REPOSITORY}\`"
             echo "- Tag: \`${{ steps.publish.outputs.image_tag }}\`"
             echo "- Image: \`${{ steps.publish.outputs.image_uri }}\`"
             echo "- Digest: \`${{ steps.publish.outputs.image_digest }}\`"
